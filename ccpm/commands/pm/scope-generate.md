@@ -25,7 +25,7 @@ PRD_NAME=$(echo "$ARGUMENTS" | cut -d' ' -f2)
 
 DECOMP="$SESSION_DIR/decomposition.md"
 DISCOVERY="$SESSION_DIR/discovery.md"
-OUTPUT="$SESSION_DIR/prds/${PRD_NAME}.md"
+OUTPUT=".claude/prds/${PRD_NAME}.md"
 
 echo "Generating PRD: $PRD_NAME"
 echo "From scope: $SCOPE_NAME"
@@ -176,7 +176,7 @@ date -u +"%Y-%m-%dT%H:%M:%SZ"
 ### Write the PRD
 
 ```bash
-mkdir -p "$SESSION_DIR/prds"
+mkdir -p ".claude/prds"
 # Write PRD content to $OUTPUT
 ```
 
@@ -202,7 +202,7 @@ Summary:
 - Requirements: {count}
 - Dependencies: {list or "None"}
 
-Saved to: .claude/scopes/{scope-name}/prds/{prd-name}.md
+Saved to: .claude/prds/{prd-name}.md
 
 Remaining PRDs to generate: {count}
 ```
