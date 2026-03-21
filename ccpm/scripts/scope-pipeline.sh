@@ -467,13 +467,17 @@ run_step_10_deploy() {
     return 1
   }
 
-  # Try to extract the deployed URL from deploy output or K8s ingress
+  # Extract the deployed URL from NodePort services
   local url=""
   url=$(echo "$output" | grep -oP 'https?://[^\s]+' | tail -1) || true
   if [ -z "$url" ]; then
-    # Fallback: check ingress for the namespace
-    url=$(kubectl get ingress -n "$session" -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null) || true
-    [ -n "$url" ] && url="https://$url"
+    # Detect NodePort URL: node IP + first NodePort
+    local node_ip nodeport
+    node_ip=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null) || true
+    nodeport=$(kubectl get svc -n "$session" -o jsonpath='{.items[0].spec.ports[0].nodePort}' 2>/dev/null) || true
+    if [ -n "$node_ip" ] && [ -n "$nodeport" ]; then
+      url="http://${node_ip}:${nodeport}"
+    fi
   fi
 
   if [ -n "$url" ]; then

@@ -84,6 +84,26 @@ for manifest in {manifests}; do
 done
 ```
 
+### 5.5. Patch Services to NodePort
+
+After applying manifests, patch all ClusterIP services to NodePort so they are externally accessible:
+
+```bash
+# Get all ClusterIP services (skip kubernetes default)
+kubectl get svc -n {namespace} -o json | \
+  jq -r '.items[] | select(.spec.type == "ClusterIP") | .metadata.name' | \
+  while read svc; do
+    echo "Patching $svc to NodePort..."
+    kubectl patch svc "$svc" -n {namespace} -p '{"spec": {"type": "NodePort"}}'
+  done
+```
+
+After patching, retrieve the assigned NodePorts:
+
+```bash
+kubectl get svc -n {namespace} -o wide
+```
+
 ### 6. Restart Deployments (force pull new images)
 
 ```bash
@@ -113,6 +133,12 @@ kubectl wait --for=condition=ready pod --all -n {namespace} --timeout=60s
 ```bash
 kubectl get pods -n {namespace}
 kubectl get services -n {namespace}
+
+# Show NodePort access URLs
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+kubectl get svc -n {namespace} -o json | \
+  jq -r --arg ip "$NODE_IP" \
+  '.items[] | select(.spec.type == "NodePort") | .spec.ports[] | "\(.name // "default"): http://\($ip):\(.nodePort)"'
 ```
 
 </instructions>
@@ -130,9 +156,9 @@ Pods:
   - {pod-1}: Running (1/1)
   - {pod-2}: Running (1/1)
 
-Services:
-  - {svc-1}: ClusterIP {ip}:{port}
-  - {svc-2}: NodePort {ip}:{nodeport}
+Services (NodePort):
+  - {svc-1}: http://{node-ip}:{nodeport}
+  - {svc-2}: http://{node-ip}:{nodeport}
 ```
 
 ### Failure
@@ -191,6 +217,8 @@ deploy:
 - Calls `/pm:build-deployment` for image builds
 - Creates namespace if it doesn't exist
 - Creates secrets from .env if configured
+- Patches all ClusterIP services to NodePort for external access
 - Restarts deployments to force image pull
 - Waits for all pods to be ready before reporting success
+- Reports NodePort URLs using node IP + assigned port
 - Can be called by `/pm:scope-run` when deployment is needed
