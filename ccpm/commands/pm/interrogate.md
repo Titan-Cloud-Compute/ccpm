@@ -99,6 +99,12 @@ Ask ONE question:
 
 Store the topic in a variable: `TOPIC="{user's response}"`
 
+**Acknowledge the user's input before doing anything else:**
+
+```
+"Got it — you want to build: {TOPIC}. Let me research this and find the right features and user journeys. This will take a moment."
+```
+
 Update conversation.md phase:
 ```markdown
 Phase: research
@@ -278,13 +284,25 @@ You can say "all good" to confirm everything, or list specific changes.
   - **MODIFY X to Y**: Update description or name
   - **ADD X**: `SELECT upsert_feature('{SESSION_NAME}', 'X', 'User-specified feature', 'user')`
 
+**Acknowledge the user's review before proceeding.** Summarize exactly what was confirmed, removed, modified, or added:
+
+```
+"Got it. Here's what I've recorded:
+- {N} features confirmed
+- {list any removed}
+- {list any added}
+- {N} journeys confirmed
+
+Now I have a few quick infrastructure questions."
+```
+
 **Record in conversation.md:**
 ```markdown
 **Claude:** {the presentation above}
 
 **User:** {their response}
 
-**Claude:** Got it. {Summary of changes made}
+**Claude:** {the acknowledgment above}
 
 ```
 
@@ -392,13 +410,26 @@ INSERT INTO integration (session_name, platform, direction, purpose, status)
 VALUES ('{SESSION_NAME}', '{platform}', 'bidirectional', '{inferred purpose}', 'confirmed');
 ```
 
+**Acknowledge the user's infrastructure selections before proceeding:**
+
+```
+"Got it. Here's your infrastructure setup:
+- Auth: {method}
+- Scale: {level}
+- Permissions: {model}
+- Deployment: {target}
+- Integrations: {list or 'none'}
+
+Saving configuration and generating technical operations from your journeys."
+```
+
 **Record in conversation.md:**
 ```markdown
 **Claude:** {infrastructure questions}
 
 **User:** {their selections}
 
-**Claude:** Noted. Configuration saved.
+**Claude:** {the acknowledgment above}
 
 ```
 
@@ -539,14 +570,15 @@ Format:
 
 ## Rules
 
-1. Run /dr-refine before /dr-full to clarify scope
-2. Use /dr-full to discover features and journeys
-3. Present all features and journeys at once for a single confirmation round
-4. Keep infrastructure questions as quick selections, not deep interrogation
-5. Store all data in database tables
-6. Write every exchange to conversation.md
-7. Derive technical operations from journeys
-8. Confirm everything when user says "looks good" or equivalent
+1. **Acknowledge every user input before doing anything else.** After the user responds, immediately confirm what you received and what you're about to do next. Do not silently proceed to the next step.
+2. Run /dr-refine before /dr-full to clarify scope
+3. Use /dr-full to discover features and journeys
+4. Present all features and journeys at once for a single confirmation round
+5. Keep infrastructure questions as quick selections, not deep interrogation
+6. Store all data in database tables
+7. Write every exchange to conversation.md
+8. Derive technical operations from journeys
+9. Confirm everything when user says "looks good" or equivalent
 
 ---
 
