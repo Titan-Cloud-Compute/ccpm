@@ -1,6 +1,6 @@
 # Deploy
 
-Deploy project to Kubernetes. Optionally builds images first via `/pm:build-deployment`.
+Deploy project to Kubernetes with NodePort services and TLS via Tailscale Serve.
 
 ## Usage
 ```
@@ -27,9 +27,10 @@ deploy:
   enabled: true
   work_dir: /path/to/project
   namespace: app-namespace
-  registry: ubuntu.desmana-truck.ts.net:30500
+  registry: localhost:30500
   manifests: k8s/           # Directory or list of files
   secrets_from: .env        # Optional: create secrets from .env
+  tailscale_host: ubuntu.desmana-truck.ts.net  # Optional: Tailscale hostname for TLS
   images:
     - name: app-frontend
       dockerfile: frontend/Dockerfile
@@ -84,12 +85,12 @@ for manifest in {manifests}; do
 done
 ```
 
-### 5.5. Patch Services to NodePort
+### 6. Patch Services to NodePort
 
-After applying manifests, patch all ClusterIP services to NodePort so they are externally accessible:
+All services that need external access use NodePort (the cluster does not use LoadBalancer or Ingress for application traffic).
 
 ```bash
-# Get all ClusterIP services (skip kubernetes default)
+# Get all ClusterIP services (skip kubernetes default and internal-only services like databases)
 kubectl get svc -n {namespace} -o json | \
   jq -r '.items[] | select(.spec.type == "ClusterIP") | .metadata.name' | \
   while read svc; do
@@ -104,7 +105,41 @@ After patching, retrieve the assigned NodePorts:
 kubectl get svc -n {namespace} -o wide
 ```
 
-### 6. Restart Deployments (force pull new images)
+### 7. Set Up TLS via Tailscale Serve
+
+The cluster uses Tailscale Serve for TLS termination (Tailscale manages Let's Encrypt certs automatically). Each service gets a dedicated HTTPS port that proxies to its NodePort.
+
+```bash
+TS_HOST="${tailscale_host:-ubuntu.desmana-truck.ts.net}"
+
+# For each NodePort service, create a Tailscale Serve entry on a unique HTTPS port
+kubectl get svc -n {namespace} -o json | \
+  jq -r '.items[] | select(.spec.type == "NodePort") | "\(.metadata.name) \(.spec.ports[0].nodePort)"' | \
+  while read svc_name node_port; do
+    # Pick a TLS port (use convention: NodePort value + offset, or check availability)
+    # Find a free port in the 8400-8499 range
+    TLS_PORT=$(for p in $(seq 8452 8499); do
+      sudo tailscale serve status 2>&1 | grep -q ":$p" || { echo "$p"; break; }
+    done)
+
+    if [ -n "$TLS_PORT" ]; then
+      sudo tailscale serve --bg --https "$TLS_PORT" "http://localhost:$node_port"
+      echo "  $svc_name: https://$TS_HOST:$TLS_PORT -> NodePort $node_port"
+    else
+      echo "  ⚠️ No free TLS port for $svc_name (NodePort $node_port accessible via HTTP only)"
+    fi
+  done
+```
+
+**Why Tailscale Serve instead of Ingress/cert-manager:**
+- The Tailscale hostname resolves to the Tailscale IP (100.x.x.x), not the MetalLB IP
+- `tailscaled` owns port 443 on the Tailscale interface and handles TLS termination
+- Existing services on this cluster use this pattern (minio, orchestration, whisper)
+- Browsers accessing via `https://{ts-hostname}` hit Tailscale, not nginx-ingress
+
+**Do not use sub-path routing** (e.g., `/myapp`) for SPAs — static asset paths break unless the frontend is rebuilt with a matching base path. Use a dedicated port per service instead.
+
+### 8. Restart Deployments (force pull new images)
 
 ```bash
 # Get all deployments and restart them
@@ -113,7 +148,7 @@ kubectl get deployments -n {namespace} -o name | while read deploy; do
 done
 ```
 
-### 7. Wait for Rollout
+### 9. Wait for Rollout
 
 ```bash
 kubectl get deployments -n {namespace} -o name | while read deploy; do
@@ -122,23 +157,23 @@ kubectl get deployments -n {namespace} -o name | while read deploy; do
 done
 ```
 
-### 8. Verify Pods Ready
+### 10. Verify Pods Ready
 
 ```bash
 kubectl wait --for=condition=ready pod --all -n {namespace} --timeout=60s
 ```
 
-### 9. Report Status
+### 11. Report Status
 
 ```bash
 kubectl get pods -n {namespace}
 kubectl get services -n {namespace}
 
-# Show NodePort access URLs
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-kubectl get svc -n {namespace} -o json | \
-  jq -r --arg ip "$NODE_IP" \
-  '.items[] | select(.spec.type == "NodePort") | .spec.ports[] | "\(.name // "default"): http://\($ip):\(.nodePort)"'
+# Show access URLs
+TS_HOST="${tailscale_host:-ubuntu.desmana-truck.ts.net}"
+echo ""
+echo "Access URLs:"
+tailscale serve status 2>&1 | grep -A1 "$TS_HOST"
 ```
 
 </instructions>
@@ -156,16 +191,16 @@ Pods:
   - {pod-1}: Running (1/1)
   - {pod-2}: Running (1/1)
 
-Services (NodePort):
-  - {svc-1}: http://{node-ip}:{nodeport}
-  - {svc-2}: http://{node-ip}:{nodeport}
+Services:
+  - {svc-1}: https://{ts-host}:{tls-port} (NodePort {nodeport})
+  - {svc-2}: https://{ts-host}:{tls-port} (NodePort {nodeport})
 ```
 
 ### Failure
 ```
 ❌ Deploy failed: {scope}
 
-Phase: {build|secrets|manifests|rollout}
+Phase: {build|secrets|manifests|rollout|tls}
 Error: {specific error}
 
 Pod status:
@@ -191,9 +226,10 @@ work_dir: /home/ubuntu/myapp
 deploy:
   enabled: true
   namespace: myapp
-  registry: ubuntu.desmana-truck.ts.net:30500
+  registry: localhost:30500
   manifests: k8s/
   secrets_from: .env
+  tailscale_host: ubuntu.desmana-truck.ts.net
   images:
     - name: myapp-frontend
       dockerfile: frontend/Dockerfile
@@ -209,16 +245,18 @@ deploy:
 | Command | Purpose |
 |---------|---------|
 | `/pm:build-deployment` | Build and push images only |
-| `/pm:deploy` | Full deploy (build + K8s) |
-| `/pm:deploy --skip-build` | K8s only, use existing images |
+| `/pm:deploy` | Full deploy (build + K8s + TLS) |
+| `/pm:deploy --skip-build` | K8s + TLS only, use existing images |
 
 ## Notes
 
 - Calls `/pm:build-deployment` for image builds
 - Creates namespace if it doesn't exist
 - Creates secrets from .env if configured
-- Patches all ClusterIP services to NodePort for external access
+- All externally-accessible services use NodePort (not ClusterIP or LoadBalancer)
+- TLS is handled by Tailscale Serve, not by ingress controllers or cert-manager
+- Each service gets a dedicated HTTPS port on the Tailscale hostname
+- Do not use sub-path routing for SPAs (asset paths break without a matching `base` in the build config)
 - Restarts deployments to force image pull
 - Waits for all pods to be ready before reporting success
-- Reports NodePort URLs using node IP + assigned port
 - Can be called by `/pm:scope-run` when deployment is needed

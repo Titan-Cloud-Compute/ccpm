@@ -1,6 +1,6 @@
 # Build Deployment
 
-Build container images and push to registry using Docker.
+Build container images and push to the local registry.
 
 ## Usage
 ```
@@ -34,7 +34,7 @@ deploy:
 ```
 
 **Required fields:**
-- `deploy.registry` - Where to push images
+- `deploy.registry` - Where to push images (default: `localhost:30500`)
 - `deploy.images` - List of images to build
 
 **If images not specified**, auto-detect from project structure:
@@ -45,7 +45,44 @@ ls {work_dir}/frontend/Dockerfile  # Frontend image
 ls {work_dir}/backend/Dockerfile   # Backend image
 ```
 
-### 2. Build Each Image
+### 2. Verify .dockerignore Files
+
+Before building, check that each build context has a `.dockerignore` file. Missing `.dockerignore` causes Docker to send the entire directory (including `node_modules`, `.git`, etc.) as build context, inflating build time and image size.
+
+```bash
+for image in {images}; do
+  context_dir="{work_dir}/{context}"
+  if [ ! -f "$context_dir/.dockerignore" ]; then
+    echo "⚠️ Creating .dockerignore for $context_dir"
+    cat > "$context_dir/.dockerignore" << 'DOCKERIGNORE_EOF'
+node_modules
+dist
+.git
+.env*
+__pycache__
+*.pyc
+.pytest_cache
+DOCKERIGNORE_EOF
+  fi
+done
+
+# Also check the project root if any image uses . as context
+if [ ! -f "{work_dir}/.dockerignore" ]; then
+  cat > "{work_dir}/.dockerignore" << 'DOCKERIGNORE_EOF'
+node_modules
+frontend/node_modules
+frontend/dist
+.claude
+.git
+.env
+__pycache__
+*.pyc
+.pytest_cache
+DOCKERIGNORE_EOF
+fi
+```
+
+### 3. Build Each Image
 
 For each image in the config:
 
@@ -65,7 +102,7 @@ fi
 echo "✅ Built: {registry}/{name}:latest"
 ```
 
-### 3. Push Each Image
+### 4. Push Each Image
 
 ```bash
 docker push {registry}/{name}:latest
@@ -78,7 +115,7 @@ fi
 echo "✅ Pushed: {registry}/{name}:latest"
 ```
 
-### 4. Verify Images in Registry
+### 5. Verify Images in Registry
 
 ```bash
 # Check registry catalog
@@ -141,8 +178,9 @@ export BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 - Uses Docker for builds and pushes
 - The local registry at localhost:30500 is HTTP (insecure) — Docker must be configured with `insecure-registries` in `/etc/docker/daemon.json`
 - Images are tagged `:latest` (configurable via TAG env var)
-- This command only builds/pushes — use `/pm:deploy` for K8s deployment
+- This command only builds/pushes — use `/pm:deploy` for K8s deployment + TLS
 - Can be called standalone or by `/pm:deploy`
+- Always verify `.dockerignore` exists before building (missing it sends entire directories including `node_modules` as context, causing multi-hundred-MB builds)
 
 ## Troubleshooting
 
@@ -166,3 +204,7 @@ Verify the registry is reachable:
 curl -s http://localhost:30500/v2/
 # Should return: {}
 ```
+
+### Build context too large (>50MB)
+
+Missing `.dockerignore`. Create one excluding `node_modules`, `.git`, `dist`, `__pycache__`, and `.env` files.
